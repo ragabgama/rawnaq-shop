@@ -3,7 +3,7 @@ window.SHOP = {
   name: 'رونق',
   whatsapp: '201029516690',
   // بيكسل فيسبوك الخاص بالمتجر ده (هنحط رقمه لما نعمله)
-  fbPixel: '',
+  fbPixel: '2433709620769637',
   firebase: { apiKey: 'AIzaSyCYSkZoNkCvrcHaxUHaj4Rb-WnCyLRF0Ss', projectId: 'rawnaq-store-8e40c' },
   // الشحن عن طريق تاجر
   shipping: {
