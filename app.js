@@ -28,7 +28,7 @@
     $('grid').innerHTML = Object.keys(S.products).map(function (k) {
       var p = S.products[k];
       return '<a class="card" href="' + p.page + location.search + '"><div class="im"><img src="' + p.images[0] + '" alt="' + esc(p.name) + '" loading="lazy">' + (p.tag ? '<span class="tag">' + esc(p.tag) + '</span>' : '') + '</div>' +
-        '<div class="b"><h3>' + esc(p.name) + '</h3><p>' + esc(p.short) + '</p><div class="price">' + fmt(p.price) + ' ج <small>+ الشحن · الدفع عند الاستلام</small></div></div></a>';
+        '<div class="b"><h3>' + esc(p.name) + '</h3><p>' + esc(p.short) + '</p><div class="price">' + (p.variants ? 'من ' : '') + fmt(p.price) + ' ج <small>+ الشحن · الدفع عند الاستلام</small></div></div></a>';
     }).join('');
   }
 
@@ -37,8 +37,10 @@
   if (P) {
     document.title = P.name + ' | ' + S.name;
     $('pname').textContent = P.name; $('pshort').textContent = P.short;
-    $('pprice').textContent = fmt(P.price) + ' ج';
-    $('sPrice').textContent = fmt(P.price) + ' ج';
+    var vi = P.variants ? (P.defVar || 0) : -1;
+    var V = function () { return vi >= 0 ? P.variants[vi] : null; };
+    var price = function () { return V() ? V().price : P.price; };
+    if (P.variants) $('pprice').innerHTML = P.variants.map(function (v) { return '<span style="display:inline-block;margin-inline-end:14px">' + esc(v.name) + ' <b>' + fmt(v.price) + ' ج</b></span>'; }).join(''); else $('pprice').textContent = fmt(P.price) + ' ج';
     if (P.market) { $('pmkt').hidden = false; $('pmkt').innerHTML = 'نفس الكمبروسر بيتباع في السوق بـ ' + fmt(P.market) + ' ج، <b>وعندنا بـ ' + fmt(P.price) + ' ج</b>'; }
     $('pts').innerHTML = P.points.map(function (t) { return '<li>' + esc(t) + '</li>'; }).join('');
     // الجاليري: الفيديو الأول وبعده الصور
@@ -51,24 +53,32 @@
     $('thumbs').innerHTML = media.map(function (m, k) { return '<button type="button" data-k="' + k + '" aria-label="' + (m.v ? 'فيديو' : 'صورة ' + k) + '"><img src="' + (m.v ? P.images[0] : m.i) + '" alt="">' + (m.v ? '<span class="play">▶</span>' : '') + '</button>'; }).join('');
     $('thumbs').addEventListener('click', function (e) { var b = e.target.closest('button'); if (b) show(Number(b.dataset.k)); });
     show(0);
-    track('ViewContent', { content_ids: [P.id], content_type: 'product', value: P.price, currency: 'EGP' });
+    track('ViewContent', { content_ids: [P.id], content_type: 'product', value: price(), currency: 'EGP' });
+    if (P.variants && $('vars')) {
+      $('vars').innerHTML = P.variants.map(function (v, k) { return '<button type="button" class="var" data-k="' + k + '"><b>' + esc(v.name) + '</b><span>' + fmt(v.price) + ' ج</span>' + (v.note ? '<em>' + esc(v.note) + '</em>' : '') + '</button>'; }).join('');
+      $('vars').addEventListener('click', function (e) { var b = e.target.closest('.var'); if (b) { vi = Number(b.dataset.k); sum(); } });
+    }
 
     // الفورم
     var gov = $('gov'), qty = 1;
     S.govs.forEach(function (g) { var o = document.createElement('option'); o.value = o.textContent = g; gov.appendChild(o); });
     var ship = function () { return gov.value ? (S.shipping[gov.value] || 100) : 0; };
     function sum() {
-      $('qv').textContent = qty;
-      $('sSub').textContent = fmt(P.price * qty) + ' ج';
+      if ($('qv')) $('qv').textContent = qty;
+      if ($('vars')) [].forEach.call($('vars').children, function (b, j) { b.classList.toggle('on', j === vi); b.setAttribute('aria-pressed', j === vi); });
+      $('sSub').textContent = (V() ? V().name + ' · ' : '') + fmt(price() * qty) + ' ج';
       $('sShip').textContent = gov.value ? fmt(ship()) + ' ج' : 'اختار المحافظة';
-      $('sTot').textContent = fmt(P.price * qty + ship()) + ' ج';
-      $('go').textContent = 'اطلب دلوقتي · ' + fmt(P.price * qty + ship()) + ' ج';
+      $('sTot').textContent = fmt(price() * qty + ship()) + ' ج';
+      $('go').textContent = 'اطلب دلوقتي · ' + fmt(price() * qty + ship()) + ' ج';
+      $('sPrice').textContent = fmt(price() * qty) + ' ج';
     }
-    $('qm').onclick = function () { qty = Math.max(1, qty - 1); sum(); };
-    $('qp').onclick = function () { qty = Math.min(3, qty + 1); sum(); };
+    if ($('qm')) {
+      $('qm').onclick = function () { qty = Math.max(1, qty - 1); sum(); };
+      $('qp').onclick = function () { qty = Math.min(3, qty + 1); sum(); };
+    }
     gov.addEventListener('change', sum); sum();
     var started = false;
-    $('order').addEventListener('focusin', function () { if (!started) { started = true; track('InitiateCheckout', { content_ids: [P.id], value: P.price, currency: 'EGP' }); } });
+    $('order').addEventListener('focusin', function () { if (!started) { started = true; track('InitiateCheckout', { content_ids: [P.id], value: price(), currency: 'EGP' }); } });
     $('stickyBtn').onclick = function () { $('order').scrollIntoView({ behavior: 'smooth' }); setTimeout(function () { $('name').focus(); }, 400); };
 
     function normPhone(v) {
@@ -99,12 +109,12 @@
       if (ok.indexOf(false) >= 0) { var f = document.querySelector('.f.bad input, .f.bad select, .f.bad textarea'); if (f) f.focus(); return; }
       if (this.website.value) return;
       busy = true; var btn = $('go'); btn.disabled = true; btn.textContent = 'بنسجّل طلبك…';
-      var sh = ship(), sub = P.price * qty, tot = sub + sh;
+      var sh = ship(), pr = price(), vn = V() ? V().name : '', sub = pr * qty, tot = sub + sh;
       var id = 'RD' + Date.now().toString(36).toUpperCase().slice(-6) + Math.floor(Math.random() * 90 + 10);
-      var fields = { id: id, items: [{ pid: P.id, name: P.name, variant: '', choice: '', qty: qty, price: P.price, custom: '', uploads: [] }], subtotal: sub, discount: 0, shipping: sh, total: tot,
+      var fields = { id: id, items: [{ pid: P.id, name: P.name, variant: vn, choice: '', qty: qty, price: pr, custom: '', uploads: [] }], subtotal: sub, discount: 0, shipping: sh, total: tot,
         name: name.slice(0, 80), phone: phone, gov: gov.value, address: address.slice(0, 250), custNote: $('note').value.trim().slice(0, 200), pay: 'cod', src: src.slice(0, 60), status: 'جديد', notes: '', taagerNo: '' };
       var ef = {}; for (var k in fields) ef[k] = enc(fields[k]);
-      var order = { id: id, product: P.name, page: P.page, qty: qty, price: P.price, shipping: sh, total: tot, name: name, phone: phone, gov: gov.value, address: address };
+      var order = { id: id, product: P.name + (vn ? ' (' + vn + ')' : ''), page: P.page, qty: qty, price: pr, shipping: sh, total: tot, name: name, phone: phone, gov: gov.value, address: address };
       var base = 'projects/' + S.firebase.projectId + '/databases/(default)/documents', day = cairoDay();
       function done(state) { order.state = state; store.set('dr_order', order); location.href = 'thanks.html'; }
       (function attempt(n) {
