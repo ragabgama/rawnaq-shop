@@ -23,31 +23,93 @@
   [].forEach.call(document.querySelectorAll('[data-wa]'), function (a) { a.href = wa(a.dataset.wa || 'أهلًا، عندي سؤال'); });
   var yr = $('yr'); if (yr) yr.textContent = new Date().getFullYear();
 
+  /* ===== المنتجات: بتيجي من لوحة التحكم، ولو حصلت مشكلة بنستخدم النسخة اللي في config.js ===== */
+  var MAIN = 'https://ragabgama.github.io/rawnaq/', DROP = 'دروب شيبينج';
+  var DB = 'https://firestore.googleapis.com/v1/projects/' + S.firebase.projectId + '/databases/(default)/documents';
+  var val = function (v) {
+    if (!v) return null;
+    if ('stringValue' in v) return v.stringValue;
+    if ('integerValue' in v) return Number(v.integerValue);
+    if ('doubleValue' in v) return v.doubleValue;
+    if ('booleanValue' in v) return v.booleanValue;
+    if ('arrayValue' in v) return (v.arrayValue.values || []).map(val);
+    if ('mapValue' in v) { var o = {}, f = v.mapValue.fields || {}; for (var k in f) o[k] = val(f[k]); return o; }
+    return null;
+  };
+  var imgUrl = function (s) { s = String(s || ''); if (s.indexOf('m:') === 0) return MAIN + 'img/m-' + s.slice(2) + '.jpg'; if (/^https:\/\//.test(s)) return s; if (/^img\//.test(s)) return MAIN + s; return s; };
+  var cfgPage = function (slug) { var c = slug && S.products[slug]; return c && c.page ? c.page : 'p.html?p=' + encodeURIComponent(slug); };
+  function toP(d) {
+    var vs = (d.variants || []).filter(function (v) { return v && Number(v.price) > 0; });
+    if (!vs.length || !d.slug) return null;
+    var multi = vs.length > 1 || !!(vs[0].name || '').trim();
+    var lines = String(d.description || '').split(/\r?\n/);
+    return {
+      id: d.id, slug: d.slug, on: d.shopOn === true, order: Number(d.order) || 0, name: d.name || '', short: d.short || '', tag: d.tag || '',
+      price: Math.min.apply(null, vs.map(function (v) { return Number(v.price); })),
+      was: !multi && Number(vs[0].was) > Number(vs[0].price) ? Number(vs[0].was) : 0,
+      variants: multi ? vs.map(function (v) { return { name: (v.name || '').trim(), price: Number(v.price), note: Number(v.was) > Number(v.price) ? 'توفّر ' + fmt(v.was - v.price) + ' ج' : '' }; }) : null,
+      defVar: multi ? Math.min(Math.max(0, Number(d.defVar) || 0), vs.length - 1) : 0,
+      images: (d.images || []).map(imgUrl).filter(Boolean), video: d.video || '',
+      points: lines.filter(function (l) { return /^\s*-\s+/.test(l); }).map(function (l) { return l.replace(/^\s*-\s+/, '').trim(); }).filter(Boolean),
+      text: lines.filter(function (l) { return l.trim() && !/^\s*(-|#)/.test(l); }).join(' ').trim(),
+      page: cfgPage(d.slug)
+    };
+  }
+  function fromCfg(slug) { var c = S.products[slug]; if (!c) return null; var o = {}; for (var k in c) o[k] = c[k]; o.slug = slug; o.on = true; return o; }
+  function query(where) {
+    var ctl = window.AbortController ? new AbortController() : null, t = setTimeout(function () { if (ctl) ctl.abort(); }, 6000);
+    return fetch(DB + ':runQuery?key=' + S.firebase.apiKey, { method: 'POST', headers: { 'Content-Type': 'application/json' }, signal: ctl ? ctl.signal : undefined,
+      body: JSON.stringify({ structuredQuery: { from: [{ collectionId: 'products' }], where: { fieldFilter: { field: { fieldPath: where[0] }, op: 'EQUAL', value: { stringValue: where[1] } } }, limit: 40 } }) })
+      .then(function (r) { clearTimeout(t); if (!r.ok) throw new Error('http ' + r.status); return r.json(); })
+      .then(function (rows) {
+        return rows.filter(function (x) { return x.document; }).map(function (x) {
+          var d = {}, f = x.document.fields || {}; for (var k in f) d[k] = val(f[k]);
+          d.id = x.document.name.split('/').pop(); return d;
+        }).filter(function (d) { return d.category === DROP; }).map(toP).filter(Boolean);
+      });
+  }
+  // لو صورة من لوحة التحكم لسه مااتنسختش على الموقع، نجيبها من قاعدة البيانات على طول
+  document.addEventListener('error', function (e) {
+    var el = e.target, m = el && el.tagName === 'IMG' && !el.dataset.fb && /\/img\/m-([A-Za-z0-9_-]+)\.jpg/.exec(el.src || '');
+    if (!m) return; el.dataset.fb = '1';
+    fetch(DB + '/media/' + m[1] + '?key=' + S.firebase.apiKey).then(function (r) { return r.json(); }).then(function (d) { var u = val((d.fields || {}).data); if (u) el.src = u; }).catch(function () {});
+  }, true);
+
   /* ===== الصفحة الرئيسية ===== */
-  if ($('grid')) {
-    $('grid').innerHTML = Object.keys(S.products).map(function (k) {
-      var p = S.products[k];
-      return '<a class="card" href="' + p.page + location.search + '"><div class="im"><img src="' + p.images[0] + '" alt="' + esc(p.name) + '" loading="lazy">' + (p.tag ? '<span class="tag">' + esc(p.tag) + '</span>' : '') + '</div>' +
+  function renderGrid(list) {
+    $('grid').innerHTML = list.map(function (p) {
+      return '<a class="card" href="' + p.page + (location.search ? (p.page.indexOf('?') >= 0 ? '&' : '?') + location.search.slice(1) : '') + '"><div class="im"><img src="' + p.images[0] + '" alt="' + esc(p.name) + '" loading="lazy">' + (p.tag ? '<span class="tag">' + esc(p.tag) + '</span>' : '') + '</div>' +
         '<div class="b"><h3>' + esc(p.name) + '</h3><p>' + esc(p.short) + '</p><div class="price">' + (p.variants ? 'من ' : '') + fmt(p.price) + ' ج <small>+ الشحن · الدفع عند الاستلام</small></div></div></a>';
-    }).join('');
+    }).join('') || '<div class="box">مفيش منتجات متاحة دلوقتي. <a data-wa="أهلًا" href="' + wa('أهلًا') + '">كلمنا واتساب</a></div>';
   }
 
   /* ===== صفحة المنتج ===== */
-  var key = document.body.dataset.p, P = key && S.products[key];
-  if (P) {
+  function initProduct(P) {
     document.title = P.name + ' | ' + S.name;
     $('pname').textContent = P.name; $('pshort').textContent = P.short;
     var vi = P.variants ? (P.defVar || 0) : -1;
     var V = function () { return vi >= 0 ? P.variants[vi] : null; };
     var price = function () { return V() ? V().price : P.price; };
     if (P.variants) $('pprice').innerHTML = P.variants.map(function (v) { return '<span style="display:inline-block;margin-inline-end:14px">' + esc(v.name) + ' <b>' + fmt(v.price) + ' ج</b></span>'; }).join(''); else $('pprice').textContent = fmt(P.price) + ' ج';
+    if (P.was) $('pprice').innerHTML += ' <s style="color:var(--muted);font-size:18px;font-weight:600">' + fmt(P.was) + ' ج</s>';
     if (P.market) { $('pmkt').hidden = false; $('pmkt').innerHTML = 'نفس الكمبروسر بيتباع في السوق بـ ' + fmt(P.market) + ' ج، <b>وعندنا بـ ' + fmt(P.price) + ' ج</b>'; }
-    $('pts').innerHTML = P.points.map(function (t) { return '<li>' + esc(t) + '</li>'; }).join('');
+    $('pts').innerHTML = (P.points || []).map(function (t) { return '<li>' + esc(t) + '</li>'; }).join('');
+    if (P.text) $('pts').insertAdjacentHTML('afterend', '<p class="short">' + esc(P.text) + '</p>');
+    var vn0 = document.querySelector('.vidnote'); if (vn0 && !P.video) vn0.hidden = true;
+    // لو المنتج له أكتر من عرض والصفحة مافيهاش مكان للعروض، نعمله مكان بدل الكمية
+    if (P.variants && !$('vars') && $('qm')) {
+      var qf = $('qm').closest('.f');
+      qf.insertAdjacentHTML('beforebegin', '<div class="f"><label>اختار العرض</label><div class="vars" id="vars"></div></div>');
+      qf.remove();
+    }
+    if (!P.variants && $('vars') && $('vars').closest('.f')) $('vars').closest('.f').hidden = true;
+    if (P.variants && $('qm') && $('qm').closest('.f')) $('qm').closest('.f').hidden = true;
     // الجاليري: الفيديو الأول وبعده الصور
     var media = (P.video ? [{ v: P.video }] : []).concat(P.images.map(function (i) { return { i: i }; }));
     function show(k) {
       var m = media[k];
-      $('main').innerHTML = m.v ? '<video src="' + m.v + '" poster="' + P.images[0] + '" controls playsinline muted autoplay loop preload="metadata"></video>' : '<img src="' + m.i + '" alt="' + esc(P.name) + '">';
+      var yt = m.v && /(?:youtu\.be\/|youtube\.com\/(?:watch\?v=|shorts\/|embed\/))([\w-]{6,})/.exec(m.v);
+      $('main').innerHTML = yt ? '<iframe src="https://www.youtube.com/embed/' + yt[1] + '?playsinline=1" style="width:100%;height:100%;border:0" allow="autoplay; encrypted-media" allowfullscreen></iframe>' : m.v ? '<video src="' + m.v + '" poster="' + P.images[0] + '" controls playsinline muted autoplay loop preload="metadata"></video>' : '<img src="' + m.i + '" alt="' + esc(P.name) + '">';
       [].forEach.call($('thumbs').children, function (b, j) { b.classList.toggle('on', j === k); });
     }
     $('thumbs').innerHTML = media.map(function (m, k) { return '<button type="button" data-k="' + k + '" aria-label="' + (m.v ? 'فيديو' : 'صورة ' + k) + '"><img src="' + (m.v ? P.images[0] : m.i) + '" alt="">' + (m.v ? '<span class="play">▶</span>' : '') + '</button>'; }).join('');
@@ -128,6 +190,25 @@
           }).catch(function () { done('offline'); });
       })(1);
     });
+  }
+
+  function unavailable() {
+    var pp = document.querySelector('.pp'); if (!pp) return;
+    pp.innerHTML = '<div class="box" style="grid-column:1/-1;text-align:center;padding:30px 16px"><h1 style="font-size:22px;margin:0 0 8px">المنتج ده مش متاح دلوقتي</h1><p style="color:var(--muted);margin:0 0 14px">ممكن تشوف باقي منتجاتنا، أو تكلمنا واتساب.</p><a class="btn" href="./' + location.search + '">شوف المنتجات</a></div>';
+    var st = document.querySelector('.sticky'); if (st) st.remove();
+  }
+  var qs; try { qs = new URLSearchParams(location.search); } catch (e) { qs = { get: function () { return ''; } }; }
+  var key = document.body.dataset.p || qs.get('p') || '';
+  if ($('order') && key) {
+    query(['slug', key]).then(function (list) {
+      var P = list[0];
+      if (P && P.on) initProduct(P); else unavailable();
+    }).catch(function () { var P = fromCfg(key); if (P) initProduct(P); else unavailable(); });
+  } else if ($('order')) unavailable();
+  if ($('grid')) {
+    query(['category', DROP]).then(function (list) {
+      renderGrid(list.filter(function (p) { return p.on; }).sort(function (a, b) { return a.order - b.order; }));
+    }).catch(function () { renderGrid(Object.keys(S.products).map(fromCfg)); });
   }
 
   /* ===== صفحة الشكر ===== */
